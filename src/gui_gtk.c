@@ -23,6 +23,7 @@ typedef struct {
     GtkWidget *strength;          /* напис про стійкість */
     GtkWidget *strength_bar;      /* графічна шкала стійкості */
     GtkWidget *key;               /* поле з ключем шифрування */
+    GtkWidget *show_key;          /* показати або приховати ключ */
     GtkWidget *cipher;            /* поле з шифротекстом */
     GtkWidget *status;            /* напис про результат (помилки, підтвердження) */
 } FormWidgets;
@@ -93,6 +94,13 @@ static void on_show_password_toggled(GtkToggleButton *toggle, gpointer data)
                              gtk_toggle_button_get_active(toggle));
 }
 
+static void on_show_key_toggled(GtkToggleButton *toggle, gpointer data)
+{
+    (void)data;
+    gtk_entry_set_visibility(GTK_ENTRY(form.key),
+                             gtk_toggle_button_get_active(toggle));
+}
+
 
 /* Структура -> форма (використовується для стандартних налаштувань) */
 static void write_settings_to_gui(const PasswordSettings *s)
@@ -122,6 +130,7 @@ static void on_reset(GtkWidget *button, gpointer data)
     gtk_entry_set_text(GTK_ENTRY(form.key), "");
     gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_password), TRUE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_key), FALSE);
     clear_strength();
     set_status("Стандартні налаштування відновлено.");
 }
@@ -218,18 +227,54 @@ static void on_check(GtkWidget *button, gpointer data)
     set_status(check_status_text(result));
 }
 
+/* Один обробник копіювання для пароля, ключа й шифротексту. */
+static void copy_entry(GtkWidget *entry, const char *empty_message,
+                       const char *success_message)
+{
+    const char *value = gtk_entry_get_text(GTK_ENTRY(entry));
+    if (value[0] == '\0') {
+        set_status(empty_message);
+        return;
+    }
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), value, -1);
+    set_status(success_message);
+}
+
 static void on_copy(GtkWidget *button, gpointer data)
 {
     (void)button;
     (void)data;
+    copy_entry(form.password, "Немає пароля для копіювання.",
+               "Пароль скопійовано в буфер обміну.");
+}
 
-    const char *password = gtk_entry_get_text(GTK_ENTRY(form.password));
-    if (password[0] == '\0') {
-        set_status("Немає пароля для копіювання.");
-        return;
-    }
-    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), password, -1);
-    set_status("Пароль скопійовано в буфер обміну");
+static void on_copy_key(GtkWidget *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    copy_entry(form.key, "Спочатку зашифруйте пароль, щоб отримати ключ.",
+               "Ключ скопійовано. Зберігайте його окремо від шифротексту.");
+}
+
+static void on_copy_cipher(GtkWidget *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    copy_entry(form.cipher, "Спочатку зашифруйте пароль, щоб отримати шифротекст.",
+               "Шифротекст скопійовано в буфер обміну.");
+}
+
+/* Прибираємо чутливі результати з вікна, не змінюючи налаштувань. */
+static void on_clear_results(GtkWidget *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    gtk_entry_set_text(GTK_ENTRY(form.password), "");
+    gtk_entry_set_text(GTK_ENTRY(form.key), "");
+    gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_key), FALSE);
+    clear_strength();
+    set_status("Результати очищено. Дані, які ви копіювали, можуть залишатися в буфері обміну.");
 }
 
 /* Якщо поставили "обов'язково", то "дозволено" вмикається саме */
@@ -259,6 +304,8 @@ static void on_encrypt(GtkWidget *button, gpointer data)
 
     CryptoStatus st = encrypt_password(password, key_hex, cipher_hex);
     if (st != CRYPTO_OK) {
+        gtk_entry_set_text(GTK_ENTRY(form.key), "");
+        gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
         set_status(crypto_status_text(st));
         return;
     }
@@ -502,12 +549,36 @@ static GtkWidget *create_window(void)
     gtk_entry_set_placeholder_text(GTK_ENTRY(form.cipher), "Шифротекст з'явиться після шифрування");
     gtk_editable_set_editable(GTK_EDITABLE(form.key), FALSE);
     gtk_editable_set_editable(GTK_EDITABLE(form.cipher), FALSE);
-    gtk_box_pack_start(GTK_BOX(crypto_box),
-        make_row("Ключ (hex):", form.key, TRUE), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypto_box),
-        make_row("Шифротекст:", form.cipher, TRUE), FALSE, FALSE, 0);
+
+    /* Ключ за замовчуванням прихований, але його можна скопіювати. */
+    gtk_entry_set_visibility(GTK_ENTRY(form.key), FALSE);
+    GtkWidget *key_row = make_row("Ключ (hex):", form.key, TRUE);
+    GtkWidget *copy_key = make_button("Копіювати", G_CALLBACK(on_copy_key), NULL);
+    gtk_widget_set_tooltip_text(copy_key, "Копіювати секретний ключ до буфера обміну");
+    gtk_box_pack_start(GTK_BOX(key_row), copy_key, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypto_box), key_row, FALSE, FALSE, 0);
+
+    form.show_key = gtk_check_button_new_with_label("Показувати ключ");
+    g_signal_connect(form.show_key, "toggled", G_CALLBACK(on_show_key_toggled), NULL);
+    gtk_box_pack_start(GTK_BOX(crypto_box), form.show_key, FALSE, FALSE, 0);
+
+    GtkWidget *cipher_row = make_row("Шифротекст:", form.cipher, TRUE);
+    gtk_box_pack_start(GTK_BOX(cipher_row),
+        make_button("Копіювати", G_CALLBACK(on_copy_cipher), NULL), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypto_box), cipher_row, FALSE, FALSE, 0);
+
+    GtkWidget *security_hint = gtk_label_new(
+        "Ключ потрібен для відновлення даних. Зберігайте його окремо від шифротексту.");
+    gtk_label_set_xalign(GTK_LABEL(security_hint), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(security_hint), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(security_hint), "section-hint");
+    gtk_box_pack_start(GTK_BOX(crypto_box), security_hint, FALSE, FALSE, 0);
+
     gtk_box_pack_start(GTK_BOX(result_col),
         make_frame("Шифрування (ChaCha20)", crypto_box), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(result_col),
+        make_button("Очистити результати", G_CALLBACK(on_clear_results), NULL),
+        FALSE, FALSE, 0);
 
     form.status = gtk_label_new("Готово до генерації пароля");
     gtk_label_set_xalign(GTK_LABEL(form.status), 0.0f);
