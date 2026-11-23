@@ -1,0 +1,7 @@
+*.exe
+password_console
+test_mt19937
+test_generator
+test_checker
+test_crypto
+.DS_Store
