@@ -5,3 +5,4 @@ test_generator
 test_checker
 test_crypto
 .DS_Store
+password_gui
