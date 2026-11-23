@@ -20,6 +20,7 @@ typedef struct {
     GtkWidget *mand_special;      /* текстове поле: обов'язкові спецсимволи */
     GtkWidget *password;          /* поле з паролем */
     GtkWidget *strength;          /* напис про стійкість */
+    GtkWidget *strength_bar;      /* графічна шкала стійкості */
     GtkWidget *key;               /* поле з ключем шифрування */
     GtkWidget *cipher;            /* поле з шифротекстом */
     GtkWidget *status;            /* напис про результат (помилки, підтвердження) */
@@ -106,6 +107,8 @@ static void show_strength(const PasswordSettings *s)
     snprintf(text, sizeof(text), "Стійкість: %s [%s]  (≈ %.0f біт)",
              strength_text(level), bar, bits);
     gtk_label_set_text(GTK_LABEL(form.strength), text);
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar),
+        level <= 0 ? 0.0 : (level >= 5 ? 1.0 : level / 5.0));
 }
 
 static void on_generate(GtkWidget *button, gpointer data)
@@ -122,6 +125,7 @@ static void on_generate(GtkWidget *button, gpointer data)
     if (st != GEN_OK) {
         gtk_entry_set_text(GTK_ENTRY(form.password), "");
         gtk_label_set_text(GTK_LABEL(form.strength), "");
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar), 0.0);
         set_status(gen_status_text(st));
         return;
     }
@@ -205,20 +209,54 @@ static GtkWidget *make_frame(const char *title, GtkWidget *content)
     return frame;
 }
 
-static GtkWidget *make_button(const char *text, GCallback on_click)
+static GtkWidget *make_button(const char *text, GCallback on_click, const char *style_class)
 {
     GtkWidget *button = gtk_button_new_with_label(text);
+    if (style_class != NULL) {
+        gtk_style_context_add_class(gtk_widget_get_style_context(button), style_class);
+    }
     g_signal_connect(button, "clicked", on_click, NULL);
     return button;
 }
 
-/* Великий моноширинний шрифт для поля з паролем */
+/* Вбудована GTK CSS-тема без зовнішніх ресурсів. */
 static void apply_style(void)
 {
+    static const char css[] =
+        "window, window.background, scrolledwindow, viewport { background-color: #0B1324; }"
+        ".app-root { background-color: #0B1324; }"
+        ".app-root .section-heading { color: #94A3B8; font-size: 12px; font-weight: 800; }"
+        ".app-root .section-hint { color: #8FA3BC; font-size: 12px; }"
+        ".app-root progressbar trough { background-color: #24364C; min-height: 9px; border-radius: 7px; }"
+        ".app-root progressbar progress { background-color: #2DD4BF; min-height: 9px; border-radius: 7px; }"
+        ".app-root label { color: #E5ECF6; font-family: Sans; font-size: 13px; }"
+        ".app-root .app-title { color: #F8FAFC; font-size: 25px; font-weight: 800; }"
+        ".app-root .app-subtitle { color: #94A3B8; font-size: 12px; }"
+        ".app-root .app-kicker { color: #2DD4BF; font-size: 11px; font-weight: 800; }"
+        ".app-root frame { background-color: #131F33; border-radius: 14px; border: 1px solid #2A3B52; padding: 6px; }"
+        ".app-root frame > border { border: 1px solid #2A3B52; border-radius: 14px; }"
+        ".app-root frame > label { color: #9DEAE0; font-size: 13px; font-weight: 700; }"
+        ".app-root entry, .app-root spinbutton { background-color: #0D192B; background-image: none; color: #F8FAFC; border: 1px solid #3C506B; border-radius: 8px; padding: 7px 9px; caret-color: #2DD4BF; }"
+        ".app-root entry:focus, .app-root spinbutton:focus { border-color: #2DD4BF; }"
+        ".app-root entry selection { background-color: #0D9488; color: white; }"
+        ".app-root spinbutton button { background: #1B3048; color: #FFFFFF; border: none; border-radius: 5px; }"
+        ".app-root checkbutton { color: #E5ECF6; }"
+        ".app-root checkbutton check { background: #15253B; border: 1px solid #64748B; border-radius: 4px; color: white; }"
+        ".app-root checkbutton check:checked { background: #0D9488; border-color: #2DD4BF; color: #FFFFFF; }"
+        ".app-root button { background-image: none; background-color: #25364E; color: #F1F5F9; border: 1px solid #3D506A; border-radius: 9px; padding: 9px 12px; font-weight: 700; }"
+        ".app-root button:hover { background-color: #334B67; }"
+        ".app-root button:active { background-color: #192C43; }"
+        ".app-root .primary-action { background-color: #2DD4BF; color: #052F2D; border-color: #2DD4BF; }"
+        ".app-root .primary-action:hover { background-color: #5EEAD4; color: #052F2D; }"
+        ".app-root .encrypt-action { background-color: #2563EB; color: #F8FAFC; border-color: #3B82F6; }"
+        ".app-root .encrypt-action:hover { background-color: #3B82F6; }"
+        ".app-root .password-field { font-family: Menlo, monospace; font-size: 20px; font-weight: 800; color: #E9FBF8; background-color: #0D2230; border: 1px solid #14B8A6; padding: 13px; }"
+        ".app-root .strength-label { color: #5EEAD4; font-size: 13px; font-weight: 700; }"
+        ".app-root .status-label { color: #A5B4C9; font-size: 12px; }"
+        ".app-root .secondary-label { color: #94A3B8; font-size: 12px; font-weight: 600; }";
+
     GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(provider,
-        ".password { font-family: Menlo, Consolas, monospace; font-size: 18px; font-weight: bold; }",
-        -1, NULL);
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
         GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
@@ -227,22 +265,72 @@ static void apply_style(void)
 static GtkWidget *create_window(void)
 {
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(window), "Генератор паролів");
-    gtk_window_set_default_size(GTK_WINDOW(window), 480, -1);
-    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
-    gtk_container_set_border_width(GTK_CONTAINER(window), 12);
+    gtk_window_set_title(GTK_WINDOW(window), "Password Generator");
+    gtk_window_set_default_size(GTK_WINDOW(window), 1180, 780);
+    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
-    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_container_add(GTK_CONTAINER(window), main_box);
+    /* Прокрутка потрібна, якщо програму відкриють на маленькому екрані. */
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(window), scroll);
 
-    /* --- довжина --- */
+    GtkWidget *viewport = gtk_viewport_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(scroll), viewport);
+
+    /* Центруємо вміст замість розтягування полів на всю ширину монітора. */
+    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 24);
+    gtk_widget_set_size_request(main_box, 1060, -1);
+    gtk_widget_set_halign(main_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(main_box, 32);
+    gtk_widget_set_margin_bottom(main_box, 32);
+    gtk_widget_set_margin_start(main_box, 24);
+    gtk_widget_set_margin_end(main_box, 24);
+    gtk_style_context_add_class(gtk_widget_get_style_context(main_box), "app-root");
+    gtk_container_add(GTK_CONTAINER(viewport), main_box);
+
+    /* Шапка застосунку. */
+    GtkWidget *header = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    GtkWidget *kicker = gtk_label_new("SECURITY TOOLS  /  C + GTK 3");
+    GtkWidget *title = gtk_label_new("Password Generator");
+    GtkWidget *subtitle = gtk_label_new("Створюй, перевіряй та шифруй паролі в одному місці");
+    gtk_label_set_xalign(GTK_LABEL(kicker), 0.0f);
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    gtk_label_set_xalign(GTK_LABEL(subtitle), 0.0f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(kicker), "app-kicker");
+    gtk_style_context_add_class(gtk_widget_get_style_context(title), "app-title");
+    gtk_style_context_add_class(gtk_widget_get_style_context(subtitle), "app-subtitle");
+    gtk_box_pack_start(GTK_BOX(header), kicker, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(header), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(header), subtitle, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(main_box), header, FALSE, FALSE, 0);
+
+    /* Дві зрозумілі колонки: налаштування зліва, результат справа. */
+    GtkWidget *columns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 20);
+    gtk_box_set_homogeneous(GTK_BOX(columns), TRUE);
+    gtk_box_pack_start(GTK_BOX(main_box), columns, FALSE, FALSE, 0);
+
+    GtkWidget *settings_col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    GtkWidget *result_col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_box_pack_start(GTK_BOX(columns), settings_col, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(columns), result_col, TRUE, TRUE, 0);
+
+    /* Ліва колонка: параметри й правила генерації. */
+    GtkWidget *settings_heading = gtk_label_new("НАЛАШТУВАННЯ ПАРОЛЯ");
+    gtk_label_set_xalign(GTK_LABEL(settings_heading), 0.0f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(settings_heading), "section-heading");
+    gtk_box_pack_start(GTK_BOX(settings_col), settings_heading, FALSE, FALSE, 0);
+
+    GtkWidget *length_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     form.length = gtk_spin_button_new_with_range(MIN_PASSWORD_LEN, MAX_PASSWORD_LEN, 1);
-    gtk_box_pack_start(GTK_BOX(main_box), make_row("Довжина пароля:", form.length, FALSE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(length_box),
+        make_row("Довжина (4–128):", form.length, FALSE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settings_col),
+        make_frame("Довжина пароля", length_box), FALSE, FALSE, 0);
 
-    /* --- дозволені символи --- */
-    GtkWidget *allowed_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *allowed_checks = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *allowed_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *allowed_checks = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     form.allow_lower = gtk_check_button_new_with_label("малі літери");
     form.allow_upper = gtk_check_button_new_with_label("великі літери");
     form.allow_digit = gtk_check_button_new_with_label("цифри");
@@ -250,63 +338,92 @@ static GtkWidget *create_window(void)
     gtk_box_pack_start(GTK_BOX(allowed_checks), form.allow_upper, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(allowed_checks), form.allow_digit, FALSE, FALSE, 0);
     form.allowed_special = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form.allowed_special), "Наприклад: !@#$%^&*");
     gtk_box_pack_start(GTK_BOX(allowed_box), allowed_checks, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(allowed_box), make_row("Спецсимволи:", form.allowed_special, TRUE), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(main_box), make_frame("Дозволені символи", allowed_box), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(allowed_box),
+        make_row("Спецсимволи:", form.allowed_special, TRUE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settings_col),
+        make_frame("Дозволені символи", allowed_box), FALSE, FALSE, 0);
 
-    /* --- обов'язкові символи --- */
-    GtkWidget *mand_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *mand_checks = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *mandatory_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    GtkWidget *mandatory_checks = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     form.mand_lower = gtk_check_button_new_with_label("мала літера");
     form.mand_upper = gtk_check_button_new_with_label("велика літера");
     form.mand_digit = gtk_check_button_new_with_label("цифра");
-    gtk_box_pack_start(GTK_BOX(mand_checks), form.mand_lower, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(mand_checks), form.mand_upper, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(mand_checks), form.mand_digit, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mandatory_checks), form.mand_lower, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mandatory_checks), form.mand_upper, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mandatory_checks), form.mand_digit, FALSE, FALSE, 0);
     form.mand_special = gtk_entry_new();
-    gtk_box_pack_start(GTK_BOX(mand_box), mand_checks, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(mand_box), make_row("Спецсимволи:", form.mand_special, TRUE), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(main_box), make_frame("Обов’язкові символи", mand_box), FALSE, FALSE, 0);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form.mand_special), "Необов'язково: @!");
+    gtk_box_pack_start(GTK_BOX(mandatory_box), mandatory_checks, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mandatory_box),
+        make_row("Спецсимволи:", form.mand_special, TRUE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settings_col),
+        make_frame("Обов'язкові символи", mandatory_box), FALSE, FALSE, 0);
 
     g_signal_connect(form.mand_lower, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_lower);
     g_signal_connect(form.mand_upper, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_upper);
     g_signal_connect(form.mand_digit, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_digit);
 
-    /* --- кнопки --- */
+    GtkWidget *hint = gtk_label_new(
+        "Обов'язкові символи автоматично враховуються під час генерації.");
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(hint), "section-hint");
+    gtk_box_pack_start(GTK_BOX(settings_col), hint, FALSE, FALSE, 0);
+
+    /* Права колонка: дії, пароль і шифрування. */
+    GtkWidget *result_heading = gtk_label_new("РЕЗУЛЬТАТ ТА ІНСТРУМЕНТИ");
+    gtk_label_set_xalign(GTK_LABEL(result_heading), 0.0f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(result_heading), "section-heading");
+    gtk_box_pack_start(GTK_BOX(result_col), result_heading, FALSE, FALSE, 0);
+
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_set_homogeneous(GTK_BOX(buttons), TRUE);
-    gtk_box_pack_start(GTK_BOX(buttons), make_button("Згенерувати", G_CALLBACK(on_generate)), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(buttons), make_button("Перевірити", G_CALLBACK(on_check)), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(buttons), make_button("Копіювати", G_CALLBACK(on_copy)), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(main_box), buttons, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons),
+        make_button("Згенерувати", G_CALLBACK(on_generate), "primary-action"), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons),
+        make_button("Перевірити", G_CALLBACK(on_check), NULL), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons),
+        make_button("Копіювати", G_CALLBACK(on_copy), NULL), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(result_col), buttons, FALSE, FALSE, 0);
 
-    /* --- пароль і стійкість --- */
+    GtkWidget *password_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     form.password = gtk_entry_new();
-    gtk_style_context_add_class(gtk_widget_get_style_context(form.password), "password");
-    gtk_box_pack_start(GTK_BOX(main_box), form.password, FALSE, FALSE, 0);
-
-    form.strength = gtk_label_new("");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form.password), "Згенеруй або встав свій пароль");
+    gtk_style_context_add_class(gtk_widget_get_style_context(form.password), "password-field");
+    gtk_box_pack_start(GTK_BOX(password_box), form.password, FALSE, FALSE, 0);
+    form.strength = gtk_label_new("Стійкість: ще не оцінено");
     gtk_label_set_xalign(GTK_LABEL(form.strength), 0.0f);
-    gtk_box_pack_start(GTK_BOX(main_box), form.strength, FALSE, FALSE, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(form.strength), "strength-label");
+    gtk_box_pack_start(GTK_BOX(password_box), form.strength, FALSE, FALSE, 0);
+    form.strength_bar = gtk_progress_bar_new();
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar), 0.0);
+    gtk_box_pack_start(GTK_BOX(password_box), form.strength_bar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(result_col),
+        make_frame("Згенерований пароль", password_box), FALSE, FALSE, 0);
 
-    /* --- шифрування --- */
-    GtkWidget *crypto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *crypto_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_set_homogeneous(GTK_BOX(crypto_buttons), TRUE);
-    gtk_box_pack_start(GTK_BOX(crypto_buttons), make_button("Зашифрувати", G_CALLBACK(on_encrypt)), TRUE, TRUE, 0);
+    GtkWidget *crypto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 9);
+    gtk_box_pack_start(GTK_BOX(crypto_box),
+        make_button("Зашифрувати", G_CALLBACK(on_encrypt), "encrypt-action"), FALSE, FALSE, 0);
     form.key = gtk_entry_new();
     form.cipher = gtk_entry_new();
-    gtk_box_pack_start(GTK_BOX(crypto_box), crypto_buttons, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypto_box), make_row("Ключ (hex):", form.key, TRUE), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(crypto_box), make_row("Шифротекст:", form.cipher, TRUE), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(main_box), make_frame("Шифрування (ChaCha20)", crypto_box), FALSE, FALSE, 0);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form.key), "Ключ з'явиться після шифрування");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(form.cipher), "Шифротекст з'явиться після шифрування");
+    gtk_editable_set_editable(GTK_EDITABLE(form.key), FALSE);
+    gtk_editable_set_editable(GTK_EDITABLE(form.cipher), FALSE);
+    gtk_box_pack_start(GTK_BOX(crypto_box),
+        make_row("Ключ (hex):", form.key, TRUE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(crypto_box),
+        make_row("Шифротекст:", form.cipher, TRUE), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(result_col),
+        make_frame("Шифрування (ChaCha20)", crypto_box), FALSE, FALSE, 0);
 
-    /* --- рядок стану --- */
-    form.status = gtk_label_new("");
+    form.status = gtk_label_new("Готово до генерації пароля");
     gtk_label_set_xalign(GTK_LABEL(form.status), 0.0f);
     gtk_label_set_line_wrap(GTK_LABEL(form.status), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(form.status), 55);
-    gtk_box_pack_start(GTK_BOX(main_box), form.status, FALSE, FALSE, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(form.status), "status-label");
+    gtk_box_pack_start(GTK_BOX(result_col), form.status, FALSE, FALSE, 0);
 
     return window;
 }
@@ -314,6 +431,10 @@ static GtkWidget *create_window(void)
 int main(int argc, char **argv)
 {
     gtk_init(&argc, &argv);
+    GtkSettings *gtk_settings = gtk_settings_get_default();
+    if (gtk_settings != NULL) {
+        g_object_set(gtk_settings, "gtk-application-prefer-dark-theme", TRUE, NULL);
+    }
 
     mt_seed_from_os(&g_mt);      /* початкові дані для вихору Мерсенна беремо в ОС */
     apply_style();
@@ -325,6 +446,8 @@ int main(int argc, char **argv)
     write_settings_to_gui(&defaults);
 
     gtk_widget_show_all(window);
+    /* Велике вікно без неконтрольованого розтягування елементів. */
+    gtk_window_maximize(GTK_WINDOW(window));
     gtk_main();
     return 0;
 }
