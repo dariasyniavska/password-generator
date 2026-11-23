@@ -19,6 +19,7 @@ typedef struct {
     GtkWidget *mand_digit;
     GtkWidget *mand_special;      /* текстове поле: обов'язкові спецсимволи */
     GtkWidget *password;          /* поле з паролем */
+    GtkWidget *show_password;     /* перемикач видимості пароля */
     GtkWidget *strength;          /* напис про стійкість */
     GtkWidget *strength_bar;      /* графічна шкала стійкості */
     GtkWidget *key;               /* поле з ключем шифрування */
@@ -39,23 +40,59 @@ static void set_checked(GtkWidget *check, int value)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), value ? TRUE : FALSE);
 }
 
-/* Копіює рядок, пропускаючи пробіли (користувач міг випадково їх набрати) */
-static void copy_without_spaces(const char *src, char *dst, int dst_size)
-{
-    int j = 0;
-    for (int i = 0; src[i] != '\0' && j < dst_size - 1; i++) {
-        if (src[i] != ' ') {
-            dst[j] = src[i];
-            j++;
-        }
-    }
-    dst[j] = '\0';
-}
-
 static void set_status(const char *text)
 {
     gtk_label_set_text(GTK_LABEL(form.status), text);
 }
+
+/* Не виправляємо ввід непомітно: пробіл, літера, цифра або надто довге
+   значення у полі спецсимволів повинні призводити до зрозумілої помилки. */
+static gboolean read_specials(GtkWidget *entry, char *destination, size_t capacity)
+{
+    const char *value = gtk_entry_get_text(GTK_ENTRY(entry));
+    size_t length = strlen(value);
+    if (length >= capacity) {
+        set_status("Забагато спецсимволів: максимум 64 символи у полі.");
+        gtk_widget_grab_focus(entry);
+        return FALSE;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (c < 33 || c > 126 || g_ascii_isalnum(c)) {
+            set_status("Спецсимволи: використовуйте лише знаки ASCII, без пробілів, літер і цифр.");
+            gtk_widget_grab_focus(entry);
+            return FALSE;
+        }
+    }
+    memcpy(destination, value, length + 1);
+    return TRUE;
+}
+
+static void clear_strength(void)
+{
+    gtk_label_set_text(GTK_LABEL(form.strength), "Стійкість: ще не оцінено");
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar), 0.0);
+}
+
+/* Після редагування пароля більше не показуємо результат старої перевірки
+   або ключ, що належав попередньому паролю. */
+static void on_password_changed(GtkEditable *editable, gpointer data)
+{
+    (void)editable;
+    (void)data;
+    clear_strength();
+    gtk_entry_set_text(GTK_ENTRY(form.key), "");
+    gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
+    set_status("Пароль змінено. Натисніть «Перевірити» для нової оцінки.");
+}
+
+static void on_show_password_toggled(GtkToggleButton *toggle, gpointer data)
+{
+    (void)data;
+    gtk_entry_set_visibility(GTK_ENTRY(form.password),
+                             gtk_toggle_button_get_active(toggle));
+}
+
 
 /* Структура -> форма (використовується для стандартних налаштувань) */
 static void write_settings_to_gui(const PasswordSettings *s)
@@ -73,39 +110,61 @@ static void write_settings_to_gui(const PasswordSettings *s)
     gtk_entry_set_text(GTK_ENTRY(form.mand_special), s->mandatory_special);
 }
 
+static void on_reset(GtkWidget *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+
+    PasswordSettings defaults;
+    settings_set_default(&defaults);
+    write_settings_to_gui(&defaults);
+    gtk_entry_set_text(GTK_ENTRY(form.password), "");
+    gtk_entry_set_text(GTK_ENTRY(form.key), "");
+    gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_password), TRUE);
+    clear_strength();
+    set_status("Стандартні налаштування відновлено.");
+}
+
 /* Форма -> структура (викликається перед генерацією і перевіркою) */
-static void read_settings_from_gui(PasswordSettings *s)
+static gboolean read_settings_from_gui(PasswordSettings *s)
 {
     memset(s, 0, sizeof(*s));
 
-    gtk_spin_button_update(GTK_SPIN_BUTTON(form.length));   /* прийняти число, яке ще набирають */
+    gtk_spin_button_update(GTK_SPIN_BUTTON(form.length));
     s->length = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(form.length));
-
     s->allow_lower = is_checked(form.allow_lower);
     s->allow_upper = is_checked(form.allow_upper);
     s->allow_digit = is_checked(form.allow_digit);
-    copy_without_spaces(gtk_entry_get_text(GTK_ENTRY(form.allowed_special)),
-                        s->allowed_special, (int)sizeof(s->allowed_special));
-
     s->mandatory_lower = is_checked(form.mand_lower);
     s->mandatory_upper = is_checked(form.mand_upper);
     s->mandatory_digit = is_checked(form.mand_digit);
-    copy_without_spaces(gtk_entry_get_text(GTK_ENTRY(form.mand_special)),
-                        s->mandatory_special, (int)sizeof(s->mandatory_special));
+
+    if (!read_specials(form.allowed_special, s->allowed_special,
+                       sizeof(s->allowed_special))) {
+        return FALSE;
+    }
+    if (!read_specials(form.mand_special, s->mandatory_special,
+                       sizeof(s->mandatory_special))) {
+        return FALSE;
+    }
+    /* Перевіряємо правила до виклику генератора або перевірки пароля. */
+    PasswordSettings normalized = *s;
+    GenStatus result = normalize_settings(&normalized);
+    if (result != GEN_OK) {
+        set_status(gen_status_text(result));
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static void show_strength(const PasswordSettings *s)
 {
     char text[160];
-    char bar[6] = "-----";
     double bits = estimate_entropy_bits(s);
     int level = strength_level(bits);
-
-    for (int i = 0; i < level; i++) {
-        bar[i] = '#';
-    }
-    snprintf(text, sizeof(text), "Стійкість: %s [%s]  (≈ %.0f біт)",
-             strength_text(level), bar, bits);
+    snprintf(text, sizeof(text), "Орієнтовна стійкість за параметрами: %s (≈ %.0f біт)",
+             strength_text(level), bits);
     gtk_label_set_text(GTK_LABEL(form.strength), text);
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar),
         level <= 0 ? 0.0 : (level >= 5 ? 1.0 : level / 5.0));
@@ -119,13 +178,15 @@ static void on_generate(GtkWidget *button, gpointer data)
     PasswordSettings s;
     char password[MAX_PASSWORD_LEN + 1];
 
-    read_settings_from_gui(&s);
+    if (!read_settings_from_gui(&s)) {
+        clear_strength();
+        return;
+    }
     GenStatus st = generate_password(&g_mt, &s, password);
 
     if (st != GEN_OK) {
         gtk_entry_set_text(GTK_ENTRY(form.password), "");
-        gtk_label_set_text(GTK_LABEL(form.strength), "");
-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar), 0.0);
+        clear_strength();
         set_status(gen_status_text(st));
         return;
     }
@@ -142,10 +203,19 @@ static void on_check(GtkWidget *button, gpointer data)
     (void)data;
 
     PasswordSettings s;
-    read_settings_from_gui(&s);
+    if (!read_settings_from_gui(&s)) {
+        clear_strength();
+        return;
+    }
 
     const char *password = gtk_entry_get_text(GTK_ENTRY(form.password));
-    set_status(check_status_text(check_password(password, &s)));
+    CheckStatus result = check_password(password, &s);
+    if (result == CHECK_OK) {
+        show_strength(&s);
+    } else {
+        clear_strength();
+    }
+    set_status(check_status_text(result));
 }
 
 static void on_copy(GtkWidget *button, gpointer data)
@@ -155,6 +225,7 @@ static void on_copy(GtkWidget *button, gpointer data)
 
     const char *password = gtk_entry_get_text(GTK_ENTRY(form.password));
     if (password[0] == '\0') {
+        set_status("Немає пароля для копіювання.");
         return;
     }
     gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), password, -1);
@@ -166,6 +237,14 @@ static void on_mandatory_toggled(GtkToggleButton *mandatory, gpointer allow_widg
 {
     if (gtk_toggle_button_get_active(mandatory)) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(allow_widget), TRUE);
+    }
+}
+
+/* Якщо тип символів заборонено, вимикаємо відповідну обов'язковість. */
+static void on_allowed_toggled(GtkToggleButton *allow, gpointer mandatory_widget)
+{
+    if (!gtk_toggle_button_get_active(allow)) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(mandatory_widget), FALSE);
     }
 }
 
@@ -364,6 +443,9 @@ static GtkWidget *create_window(void)
     g_signal_connect(form.mand_lower, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_lower);
     g_signal_connect(form.mand_upper, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_upper);
     g_signal_connect(form.mand_digit, "toggled", G_CALLBACK(on_mandatory_toggled), form.allow_digit);
+    g_signal_connect(form.allow_lower, "toggled", G_CALLBACK(on_allowed_toggled), form.mand_lower);
+    g_signal_connect(form.allow_upper, "toggled", G_CALLBACK(on_allowed_toggled), form.mand_upper);
+    g_signal_connect(form.allow_digit, "toggled", G_CALLBACK(on_allowed_toggled), form.mand_digit);
 
     GtkWidget *hint = gtk_label_new(
         "Обов'язкові символи автоматично враховуються під час генерації.");
@@ -371,6 +453,8 @@ static GtkWidget *create_window(void)
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(hint), "section-hint");
     gtk_box_pack_start(GTK_BOX(settings_col), hint, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settings_col),
+        make_button("Скинути налаштування", G_CALLBACK(on_reset), NULL), FALSE, FALSE, 0);
 
     /* Права колонка: дії, пароль і шифрування. */
     GtkWidget *result_heading = gtk_label_new("РЕЗУЛЬТАТ ТА ІНСТРУМЕНТИ");
@@ -393,8 +477,14 @@ static GtkWidget *create_window(void)
     gtk_entry_set_placeholder_text(GTK_ENTRY(form.password), "Згенеруй або встав свій пароль");
     gtk_style_context_add_class(gtk_widget_get_style_context(form.password), "password-field");
     gtk_box_pack_start(GTK_BOX(password_box), form.password, FALSE, FALSE, 0);
+    form.show_password = gtk_check_button_new_with_label("Показувати пароль");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_password), TRUE);
+    gtk_box_pack_start(GTK_BOX(password_box), form.show_password, FALSE, FALSE, 0);
+    g_signal_connect(form.show_password, "toggled", G_CALLBACK(on_show_password_toggled), NULL);
+    g_signal_connect(form.password, "changed", G_CALLBACK(on_password_changed), NULL);
     form.strength = gtk_label_new("Стійкість: ще не оцінено");
     gtk_label_set_xalign(GTK_LABEL(form.strength), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(form.strength), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(form.strength), "strength-label");
     gtk_box_pack_start(GTK_BOX(password_box), form.strength, FALSE, FALSE, 0);
     form.strength_bar = gtk_progress_bar_new();
