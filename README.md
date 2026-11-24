@@ -1,4 +1,4 @@
-# Генератор паролів 
+# Генератор паролів
 
 Автори: Костик Крістіна, Синявська Дар’я (АВІС-2)
 
@@ -9,14 +9,24 @@
 (ключ береться напряму з ОС, не з Вихору Мерсенна). Ключ треба зберігати окремо від шифротексту.
 
 ## Структура
-- `include/`, `src/` - вихідний код (ядро + консоль + вікно Windows)
-- `tests/` - автоматичні тести
+- `include/`, `src/` — вихідний код (ядро, консольна версія та графічний інтерфейс на GTK 3)
+- `tests/` — автоматичні юніт-тести
 
+## Збірка
 
-## Збірка (потрібен MinGW-w64 / MSYS2 з gcc)
-    gcc -Wall -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/main_console.c -o password_console.exe -lbcrypt -lm
-    gcc -Wall -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/gui_win32.c -o password_gui.exe -mwindows -lbcrypt -lm
+### Через Make (рекомендовано)
+    make console
+    make gui
+    make test
 
-або `make console`, `make gui`, `make test` (на Windows - `mingw32-make`).
+*(На Windows використовуйте `mingw32-make`; для коректного відображення кирилиці в консолі виконайте `chcp 65001`.)*
 
-У консолі для української мови спершу виконайте `chcp 65001`.
+### Вручну через gcc
+
+**macOS / Linux:**
+    gcc -std=gnu11 -Wall -Wextra -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/main_console.c -o password_console -lm
+    gcc -std=gnu11 -Wall -Wextra -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/gui_gtk.c -o password_gui -lm $(pkg-config --cflags --libs gtk+-3.0)
+
+**Windows (MinGW-w64 / MSYS2):**
+    gcc -std=gnu11 -Wall -Wextra -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/main_console.c -o password_console.exe -lbcrypt -lm
+    gcc -std=gnu11 -Wall -Wextra -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/gui_gtk.c -o password_gui.exe -lbcrypt -lm $(pkg-config --cflags --libs gtk+-3.0)
