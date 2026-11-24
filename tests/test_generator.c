@@ -34,7 +34,7 @@ int main(void)
     CHECK(unique);
 
     settings_set_default(&s);
-    s.length = 6;                     
+    s.length = 6;
     strcpy(s.mandatory_special, "@#");
     int always_ok = 1;
     for (int i = 0; i < 20000; i++) {
@@ -58,7 +58,7 @@ int main(void)
     CHECK(strchr(pw, '!') != NULL);
 
     settings_set_default(&s);
-    s.allow_lower = 0;                  
+    s.allow_lower = 0;
     s.length = 10;
     CHECK(generate_password(&mt, &s, pw) == GEN_OK);
     int has_lower = 0;
@@ -67,9 +67,11 @@ int main(void)
 
     settings_set_default(&s);
     s.allowed_special[0] = '\0';
-    strcpy(s.mandatory_special, "$");
+    strcpy(s.mandatory_special, "=");
+    CHECK(normalize_settings(&s) == GEN_OK);
+    CHECK(strchr(s.allowed_special, '=') != NULL);
     CHECK(generate_password(&mt, &s, pw) == GEN_OK);
-    CHECK(strchr(pw, '$') != NULL);
+    CHECK(strchr(pw, '=') != NULL);
 
     settings_set_default(&s);
     s.allow_lower = s.allow_upper = 0;
@@ -94,23 +96,26 @@ int main(void)
 
     settings_set_default(&s);
     s.length = 4;
-    strcpy(s.mandatory_special, "!@#");   
+    strcpy(s.mandatory_special, "!@#");
     CHECK(generate_password(&mt, &s, pw) == GEN_ERR_TOO_MANY_MANDATORY);
 
     settings_set_default(&s);
-    strcpy(s.allowed_special, "!a");      
+    strcpy(s.allowed_special, "!a");
     CHECK(generate_password(&mt, &s, pw) == GEN_ERR_BAD_SPECIAL);
     settings_set_default(&s);
-    strcpy(s.mandatory_special, "! ");  
+    strcpy(s.allowed_special, " ");
+    CHECK(generate_password(&mt, &s, pw) == GEN_ERR_BAD_SPECIAL);
+    settings_set_default(&s);
+    strcpy(s.mandatory_special, "! ");
     CHECK(generate_password(&mt, &s, pw) == GEN_ERR_BAD_SPECIAL);
 
     settings_set_default(&s);
     s.allow_lower = s.allow_upper = 0;
-    s.mandatory_lower = s.mandatory_upper = s.mandatory_digit = 0;
+    s.mandatory_lower = s.mandatory_upper = 0;
     s.allowed_special[0] = '\0';
     s.length = 100;
     int count[10] = {0};
-    for (int i = 0; i < 1000; i++) {      
+    for (int i = 0; i < 1000; i++) {
         generate_password(&mt, &s, pw);
         for (int k = 0; k < 100; k++) count[pw[k] - '0']++;
     }

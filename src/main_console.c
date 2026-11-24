@@ -10,29 +10,48 @@
 static int ask_yes_no(const char *question, int default_value)
 {
     char line[64];
-    printf("%s (y/n) [%c]: ", question, default_value ? 'y' : 'n');
-    if (fgets(line, sizeof(line), stdin) == NULL) {
-        return default_value;
+    while (1) {
+        printf("%s (y/n) [%c]: ", question, default_value ? 'y' : 'n');
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            return default_value;
+        }
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strchr(line, ' ') != NULL) {
+            printf("Пробіл заборонено!\n");
+            continue;
+        }
+        if (line[0] == 'y' || line[0] == 'Y') return 1;
+        if (line[0] == 'n' || line[0] == 'N') return 0;
+        if (line[0] == '\0') return default_value;
+        printf("Введіть y або n.\n");
     }
-    if (line[0] == 'y' || line[0] == 'Y') {
-        return 1;
-    }
-    if (line[0] == 'n' || line[0] == 'N') {
-        return 0;
-    }
-    return default_value;
 }
 
 static void ask_string(const char *question, char *value, int max_len)
 {
     char line[256];
-    printf("%s [%s]: ", question, value);
-    if (fgets(line, sizeof(line), stdin) == NULL) {
-        return;
-    }
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0] != '\0' && (int)strlen(line) <= max_len) {
-        strcpy(value, line);
+    while (1) {
+        printf("%s [%s] (Enter - залишити, '-' - очистити): ", question, value);
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            return;
+        }
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strchr(line, ' ') != NULL) {
+            printf("Пробіл заборонено!\n");
+            continue;
+        }
+        if (line[0] == '\0') {
+            return;
+        }
+        if (strcmp(line, "-") == 0) {
+            value[0] = '\0';
+            return;
+        }
+        if ((int)strlen(line) <= max_len) {
+            strcpy(value, line);
+            return;
+        }
+        printf("Занадто довгий рядок (максимум %d символів).\n", max_len);
     }
 }
 
@@ -40,9 +59,20 @@ static void ask_settings(PasswordSettings *s)
 {
     char line[64];
 
-    printf("Довжина пароля [%d]: ", s->length);
-    if (fgets(line, sizeof(line), stdin) != NULL && atoi(line) != 0) {
-        s->length = atoi(line);
+    while (1) {
+        printf("Довжина пароля [%d]: ", s->length);
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            break;
+        }
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strchr(line, ' ') != NULL) {
+            printf("Пробіл заборонено!\n");
+            continue;
+        }
+        if (line[0] != '\0') {
+            s->length = atoi(line);
+        }
+        break;
     }
 
     s->allow_lower = ask_yes_no("Малі літери дозволені", s->allow_lower);
@@ -69,7 +99,13 @@ int main(void)
     printf("(Enter - залишити значення в дужках)\n\n");
     ask_settings(&settings);
 
-    GenStatus st = generate_password(&mt, &settings, password);
+    GenStatus st = normalize_settings(&settings);
+    if (st != GEN_OK) {
+        printf("\nПомилка: %s\n", gen_status_text(st));
+        return 1;
+    }
+
+    st = generate_password(&mt, &settings, password);
     if (st != GEN_OK) {
         printf("\nПомилка: %s\n", gen_status_text(st));
         return 1;

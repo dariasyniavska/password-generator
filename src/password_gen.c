@@ -16,11 +16,15 @@ static int is_special_char(char c)
 static int copy_unique_specials(const char *src, char *dst)
 {
     int n = 0;
+    dst[0] = '\0';
     for (int i = 0; src[i] != '\0'; i++) {
         if (!is_special_char(src[i])) {
             return 0;
         }
-        if (strchr(dst, src[i]) == NULL && n < MAX_SPECIAL) {
+        if (strchr(dst, src[i]) == NULL) {
+            if (n >= MAX_SPECIAL) {
+                return 0;
+            }
             dst[n] = src[i];
             n++;
             dst[n] = '\0';
@@ -33,7 +37,7 @@ static int random_index(MtState *mt, int n)
 {
     int i = (int)(mt_next_double(mt) * n);
     if (i >= n) {
-        i = n - 1;  
+        i = n - 1;
     }
     return i;
 }
@@ -51,7 +55,7 @@ void settings_set_default(PasswordSettings *s)
     s->mandatory_lower = 1;
     s->mandatory_upper = 1;
     s->mandatory_digit = 1;
-    s->mandatory_special[0] = '\0';   
+    s->mandatory_special[0] = '\0';
 }
 
 GenStatus normalize_settings(PasswordSettings *s)
@@ -76,8 +80,9 @@ GenStatus normalize_settings(PasswordSettings *s)
     char all_special[2 * MAX_SPECIAL + 1];
     strcpy(all_special, clean_allowed);
     strcat(all_special, clean_mandatory);
-    s->allowed_special[0] = '\0';
-    copy_unique_specials(all_special, s->allowed_special);
+    if (!copy_unique_specials(all_special, s->allowed_special)) {
+        return GEN_ERR_BAD_SPECIAL;
+    }
     strcpy(s->mandatory_special, clean_mandatory);
 
     if (!s->allow_lower && !s->allow_upper && !s->allow_digit
@@ -106,10 +111,10 @@ int build_alphabet(const PasswordSettings *s, char *alphabet)
 
 static void ensure_mandatory(MtState *mt, const PasswordSettings *s, char *pw)
 {
-    const char *req[3 + MAX_SPECIAL];   
-    char single[MAX_SPECIAL][2];       
+    const char *req[3 + MAX_SPECIAL];
+    char single[MAX_SPECIAL][2];
     int  satisfied[3 + MAX_SPECIAL] = {0};
-    int  locked[MAX_PASSWORD_LEN] = {0};  
+    int  locked[MAX_PASSWORD_LEN] = {0};
     int  n_req = 0;
 
     if (s->mandatory_lower) req[n_req++] = LOWER_LETTERS;
@@ -147,7 +152,7 @@ static void ensure_mandatory(MtState *mt, const PasswordSettings *s, char *pw)
 
 GenStatus generate_password(MtState *mt, const PasswordSettings *settings, char *out)
 {
-    PasswordSettings s = *settings;  
+    PasswordSettings s = *settings;
     out[0] = '\0';
 
     GenStatus st = normalize_settings(&s);
