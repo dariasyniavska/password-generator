@@ -11,7 +11,7 @@
 ## Структура
 - `include/`, `src/` - вихідний код (ядро + консоль + вікно Windows)
 - `tests/` - автоматичні тести
-- `docs/` - презентація
+
 
 ## Збірка (потрібен MinGW-w64 / MSYS2 з gcc)
     gcc -Wall -Iinclude src/mt19937.c src/entropy.c src/password_gen.c src/password_check.c src/crypto.c src/main_console.c -o password_console.exe -lbcrypt -lm
