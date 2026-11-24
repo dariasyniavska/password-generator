@@ -18,7 +18,7 @@ typedef struct {
     GtkWidget *mand_upper;
     GtkWidget *mand_digit;
     GtkWidget *mand_special;      /* текстове поле: обов'язкові спецсимволи */
-    GtkWidget *password;          /* поле з паролем */
+    GtkWidget *password;          /* багаторядкове поле пароля */
     GtkWidget *show_password;     /* перемикач видимості пароля */
     GtkWidget *strength;          /* напис про стійкість */
     GtkWidget *strength_bar;      /* графічна шкала стійкості */
@@ -30,6 +30,8 @@ typedef struct {
 
 static FormWidgets form;
 static MtState g_mt;              /* генератор випадкових чисел (один на всю програму) */
+static gchar *password_value = NULL;
+static gboolean password_rendering = FALSE;
 
 static int is_checked(GtkWidget *check)
 {
@@ -75,12 +77,56 @@ static void clear_strength(void)
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(form.strength_bar), 0.0);
 }
 
-/* Після редагування пароля більше не показуємо результат старої перевірки
-   або ключ, що належав попередньому паролю. */
-static void on_password_changed(GtkEditable *editable, gpointer data)
+/* У GTK 3 GtkTextView уміє переносити довгі паролі на декілька рядків.
+   Зберігаємо справжній пароль окремо, щоб у прихованому режимі не втрачати дані. */
+static const char *current_password(void)
 {
-    (void)editable;
+    return password_value != NULL ? password_value : "";
+}
+
+static void render_password(void)
+{
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(form.password));
+    gboolean visible = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(form.show_password));
+    const char *value = current_password();
+
+    password_rendering = TRUE;
+    if (visible) {
+        gtk_text_buffer_set_text(buffer, value, -1);
+    } else {
+        gchar *masked = g_strnfill(strlen(value), '*');
+        gtk_text_buffer_set_text(buffer, masked, -1);
+        g_free(masked);
+    }
+    password_rendering = FALSE;
+    gtk_widget_queue_resize(form.password);
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(form.password), visible);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(form.password), visible);
+}
+
+static void set_password_value(const char *value)
+{
+    gchar *copy = g_strdup(value);
+    g_free(password_value);
+    password_value = copy;
+    render_password();
+}
+
+/* Користувач може вручну вставити пароль у велике поле, коли його видно. */
+static void on_password_changed(GtkTextBuffer *buffer, gpointer data)
+{
     (void)data;
+    if (password_rendering) {
+        return;
+    }
+
+    GtkTextIter begin, end;
+    gtk_text_buffer_get_bounds(buffer, &begin, &end);
+    gchar *updated = gtk_text_buffer_get_text(buffer, &begin, &end, FALSE);
+    g_free(password_value);
+    password_value = updated;
+    gtk_widget_queue_resize(form.password);
+
     clear_strength();
     gtk_entry_set_text(GTK_ENTRY(form.key), "");
     gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
@@ -89,9 +135,9 @@ static void on_password_changed(GtkEditable *editable, gpointer data)
 
 static void on_show_password_toggled(GtkToggleButton *toggle, gpointer data)
 {
+    (void)toggle;
     (void)data;
-    gtk_entry_set_visibility(GTK_ENTRY(form.password),
-                             gtk_toggle_button_get_active(toggle));
+    render_password();
 }
 
 static void on_show_key_toggled(GtkToggleButton *toggle, gpointer data)
@@ -126,7 +172,7 @@ static void on_reset(GtkWidget *button, gpointer data)
     PasswordSettings defaults;
     settings_set_default(&defaults);
     write_settings_to_gui(&defaults);
-    gtk_entry_set_text(GTK_ENTRY(form.password), "");
+    set_password_value("");
     gtk_entry_set_text(GTK_ENTRY(form.key), "");
     gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_password), TRUE);
@@ -194,13 +240,13 @@ static void on_generate(GtkWidget *button, gpointer data)
     GenStatus st = generate_password(&g_mt, &s, password);
 
     if (st != GEN_OK) {
-        gtk_entry_set_text(GTK_ENTRY(form.password), "");
+        set_password_value("");
         clear_strength();
         set_status(gen_status_text(st));
         return;
     }
 
-    gtk_entry_set_text(GTK_ENTRY(form.password), password);
+    set_password_value(password);
     show_strength(&s);
     set_status(check_status_text(check_password(password, &s)));
 }
@@ -217,7 +263,7 @@ static void on_check(GtkWidget *button, gpointer data)
         return;
     }
 
-    const char *password = gtk_entry_get_text(GTK_ENTRY(form.password));
+    const char *password = current_password();
     CheckStatus result = check_password(password, &s);
     if (result == CHECK_OK) {
         show_strength(&s);
@@ -244,8 +290,13 @@ static void on_copy(GtkWidget *button, gpointer data)
 {
     (void)button;
     (void)data;
-    copy_entry(form.password, "Немає пароля для копіювання.",
-               "Пароль скопійовано в буфер обміну.");
+    const char *password = current_password();
+    if (password[0] == '\0') {
+        set_status("Немає пароля для копіювання.");
+        return;
+    }
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), password, -1);
+    set_status("Пароль скопійовано в буфер обміну.");
 }
 
 static void on_copy_key(GtkWidget *button, gpointer data)
@@ -269,7 +320,7 @@ static void on_clear_results(GtkWidget *button, gpointer data)
 {
     (void)button;
     (void)data;
-    gtk_entry_set_text(GTK_ENTRY(form.password), "");
+    set_password_value("");
     gtk_entry_set_text(GTK_ENTRY(form.key), "");
     gtk_entry_set_text(GTK_ENTRY(form.cipher), "");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_key), FALSE);
@@ -300,7 +351,7 @@ static void on_encrypt(GtkWidget *button, gpointer data)
 
     char key_hex[KEY_HEX_SIZE];
     char cipher_hex[CIPHER_HEX_SIZE];
-    const char *password = gtk_entry_get_text(GTK_ENTRY(form.password));
+    const char *password = current_password();
 
     CryptoStatus st = encrypt_password(password, key_hex, cipher_hex);
     if (st != CRYPTO_OK) {
@@ -358,7 +409,6 @@ static void apply_style(void)
         ".app-root label { color: #E5ECF6; font-family: Sans; font-size: 13px; }"
         ".app-root .app-title { color: #F8FAFC; font-size: 25px; font-weight: 800; }"
         ".app-root .app-subtitle { color: #94A3B8; font-size: 12px; }"
-        ".app-root .app-kicker { color: #2DD4BF; font-size: 11px; font-weight: 800; }"
         ".app-root frame { background-color: #131F33; border-radius: 14px; border: 1px solid #2A3B52; padding: 6px; }"
         ".app-root frame > border { border: 1px solid #2A3B52; border-radius: 14px; }"
         ".app-root frame > label { color: #9DEAE0; font-size: 13px; font-weight: 700; }"
@@ -372,13 +422,14 @@ static void apply_style(void)
         ".app-root button { background-image: none; background-color: #25364E; color: #F1F5F9; border: 1px solid #3D506A; border-radius: 9px; padding: 9px 12px; font-weight: 700; }"
         ".app-root button:hover { background-color: #334B67; }"
         ".app-root button:active { background-color: #192C43; }"
-        ".app-root .primary-action { background-color: #2DD4BF; color: #052F2D; border-color: #2DD4BF; }"
-        ".app-root .primary-action:hover { background-color: #5EEAD4; color: #052F2D; }"
+        ".app-root .primary-action { background-color: #DC2626; color: #FFFFFF; border-color: #EF4444; padding: 14px 16px; font-size: 15px; }"
+        ".app-root .primary-action:hover { background-color: #EF4444; color: #FFFFFF; }"
         ".app-root .encrypt-action { background-color: #2563EB; color: #F8FAFC; border-color: #3B82F6; }"
         ".app-root .encrypt-action:hover { background-color: #3B82F6; }"
-        ".app-root .password-field { font-family: Menlo, monospace; font-size: 20px; font-weight: 800; color: #E9FBF8; background-color: #0D2230; border: 1px solid #14B8A6; padding: 13px; }"
+        ".app-root scrolledwindow.password-wrapper { background-color: #0D2230; border: 1px solid #14B8A6; border-radius: 11px; }"
+        ".app-root textview.password-field, .app-root textview.password-field text { font-family: Menlo, monospace; font-size: 18px; font-weight: 700; color: #E9FBF8; background-color: #0D2230; }"
         ".app-root .strength-label { color: #5EEAD4; font-size: 13px; font-weight: 700; }"
-        ".app-root .status-label { color: #A5B4C9; font-size: 12px; }"
+        ".app-root .status-label { color: #FCA5A5; font-size: 13px; font-weight: 700; }"
         ".app-root .secondary-label { color: #94A3B8; font-size: 12px; font-weight: 600; }";
 
     GtkCssProvider *provider = gtk_css_provider_new();
@@ -418,16 +469,12 @@ static GtkWidget *create_window(void)
 
     /* Шапка застосунку. */
     GtkWidget *header = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    GtkWidget *kicker = gtk_label_new("SECURITY TOOLS  /  C + GTK 3");
     GtkWidget *title = gtk_label_new("Password Generator");
     GtkWidget *subtitle = gtk_label_new("Створюй, перевіряй та шифруй паролі в одному місці");
-    gtk_label_set_xalign(GTK_LABEL(kicker), 0.0f);
     gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
     gtk_label_set_xalign(GTK_LABEL(subtitle), 0.0f);
-    gtk_style_context_add_class(gtk_widget_get_style_context(kicker), "app-kicker");
     gtk_style_context_add_class(gtk_widget_get_style_context(title), "app-title");
     gtk_style_context_add_class(gtk_widget_get_style_context(subtitle), "app-subtitle");
-    gtk_box_pack_start(GTK_BOX(header), kicker, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(header), title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(header), subtitle, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(main_box), header, FALSE, FALSE, 0);
@@ -502,6 +549,18 @@ static GtkWidget *create_window(void)
     gtk_box_pack_start(GTK_BOX(settings_col), hint, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(settings_col),
         make_button("Скинути налаштування", G_CALLBACK(on_reset), NULL), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(settings_col),
+        make_button("Згенерувати", G_CALLBACK(on_generate), "primary-action"),
+        FALSE, FALSE, 0);
+
+    /* Повідомлення з'являється біля основної кнопки, а не в іншій колонці. */
+    form.status = gtk_label_new("Готово до генерації пароля");
+    gtk_label_set_xalign(GTK_LABEL(form.status), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(form.status), TRUE);
+    gtk_label_set_line_wrap_mode(GTK_LABEL(form.status), PANGO_WRAP_WORD_CHAR);
+    gtk_widget_set_size_request(form.status, 0, -1);
+    gtk_style_context_add_class(gtk_widget_get_style_context(form.status), "status-label");
+    gtk_box_pack_start(GTK_BOX(settings_col), form.status, FALSE, FALSE, 0);
 
     /* Права колонка: дії, пароль і шифрування. */
     GtkWidget *result_heading = gtk_label_new("РЕЗУЛЬТАТ ТА ІНСТРУМЕНТИ");
@@ -509,26 +568,41 @@ static GtkWidget *create_window(void)
     gtk_style_context_add_class(gtk_widget_get_style_context(result_heading), "section-heading");
     gtk_box_pack_start(GTK_BOX(result_col), result_heading, FALSE, FALSE, 0);
 
-    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_set_homogeneous(GTK_BOX(buttons), TRUE);
-    gtk_box_pack_start(GTK_BOX(buttons),
-        make_button("Згенерувати", G_CALLBACK(on_generate), "primary-action"), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(buttons),
-        make_button("Перевірити", G_CALLBACK(on_check), NULL), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(buttons),
-        make_button("Копіювати", G_CALLBACK(on_copy), NULL), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(result_col), buttons, FALSE, FALSE, 0);
-
     GtkWidget *password_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    form.password = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(form.password), "Згенеруй або встав свій пароль");
+
+    /* GTK TextView переносить навіть 128-символьні паролі на декілька рядків. */
+    GtkWidget *password_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(password_scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    /* Висота поля тепер залежить від кількості рядків пароля.
+       Для короткого пароля — один рядок, для 128 символів — стільки,
+       скільки потрібно після переносу; зайвих порожніх рядків немає. */
+    gtk_scrolled_window_set_propagate_natural_height(
+        GTK_SCROLLED_WINDOW(password_scroll), TRUE);
+    gtk_scrolled_window_set_min_content_height(
+        GTK_SCROLLED_WINDOW(password_scroll), 52);
+    gtk_scrolled_window_set_max_content_height(
+        GTK_SCROLLED_WINDOW(password_scroll), 165);
+    gtk_style_context_add_class(gtk_widget_get_style_context(password_scroll), "password-wrapper");
+    form.password = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(form.password), GTK_WRAP_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(form.password), 15);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(form.password), 15);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(form.password), 15);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(form.password), 15);
+    gtk_widget_set_tooltip_text(form.password,
+                               "Тут можна переглядати, вставляти або редагувати пароль");
     gtk_style_context_add_class(gtk_widget_get_style_context(form.password), "password-field");
-    gtk_box_pack_start(GTK_BOX(password_box), form.password, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(password_scroll), form.password);
+    gtk_box_pack_start(GTK_BOX(password_box), password_scroll, FALSE, FALSE, 0);
+
     form.show_password = gtk_check_button_new_with_label("Показувати пароль");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(form.show_password), TRUE);
     gtk_box_pack_start(GTK_BOX(password_box), form.show_password, FALSE, FALSE, 0);
     g_signal_connect(form.show_password, "toggled", G_CALLBACK(on_show_password_toggled), NULL);
-    g_signal_connect(form.password, "changed", G_CALLBACK(on_password_changed), NULL);
+    g_signal_connect(gtk_text_view_get_buffer(GTK_TEXT_VIEW(form.password)),
+                     "changed", G_CALLBACK(on_password_changed), NULL);
+
     form.strength = gtk_label_new("Стійкість: ще не оцінено");
     gtk_label_set_xalign(GTK_LABEL(form.strength), 0.0f);
     gtk_label_set_line_wrap(GTK_LABEL(form.strength), TRUE);
@@ -539,6 +613,15 @@ static GtkWidget *create_window(void)
     gtk_box_pack_start(GTK_BOX(password_box), form.strength_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(result_col),
         make_frame("Згенерований пароль", password_box), FALSE, FALSE, 0);
+
+    /* Перевірка й копіювання розташовані під паролем. */
+    GtkWidget *password_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_box_set_homogeneous(GTK_BOX(password_actions), TRUE);
+    gtk_box_pack_start(GTK_BOX(password_actions),
+        make_button("Перевірити", G_CALLBACK(on_check), NULL), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(password_actions),
+        make_button("Копіювати", G_CALLBACK(on_copy), NULL), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(result_col), password_actions, FALSE, FALSE, 0);
 
     GtkWidget *crypto_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 9);
     gtk_box_pack_start(GTK_BOX(crypto_box),
@@ -575,16 +658,10 @@ static GtkWidget *create_window(void)
     gtk_box_pack_start(GTK_BOX(crypto_box), security_hint, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(result_col),
-        make_frame("Шифрування (ChaCha20)", crypto_box), FALSE, FALSE, 0);
+        make_frame("Шифрування пароля", crypto_box), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(result_col),
         make_button("Очистити результати", G_CALLBACK(on_clear_results), NULL),
         FALSE, FALSE, 0);
-
-    form.status = gtk_label_new("Готово до генерації пароля");
-    gtk_label_set_xalign(GTK_LABEL(form.status), 0.0f);
-    gtk_label_set_line_wrap(GTK_LABEL(form.status), TRUE);
-    gtk_style_context_add_class(gtk_widget_get_style_context(form.status), "status-label");
-    gtk_box_pack_start(GTK_BOX(result_col), form.status, FALSE, FALSE, 0);
 
     return window;
 }
@@ -605,6 +682,7 @@ int main(int argc, char **argv)
     PasswordSettings defaults;
     settings_set_default(&defaults);
     write_settings_to_gui(&defaults);
+    set_password_value("");
 
     gtk_widget_show_all(window);
     /* Велике вікно без неконтрольованого розтягування елементів. */
