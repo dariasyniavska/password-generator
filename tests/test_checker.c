@@ -27,6 +27,9 @@ int main(void)
     PasswordSettings eq_s = s;
     eq_s.allowed_special[0] = '\0';
     strcpy(eq_s.mandatory_special, "=");
+    CHECK(check_password("aB3=xxxxxx", &eq_s) == CHECK_BAD_SETTINGS);
+
+    strcpy(eq_s.allowed_special, "=");
     CHECK(check_password("aB3=xxxxxx", &eq_s) == CHECK_OK);
 
     PasswordSettings bad = s;

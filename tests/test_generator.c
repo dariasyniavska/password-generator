@@ -68,8 +68,18 @@ int main(void)
     settings_set_default(&s);
     s.allowed_special[0] = '\0';
     strcpy(s.mandatory_special, "=");
-    CHECK(normalize_settings(&s) == GEN_OK);
-    CHECK(strchr(s.allowed_special, '=') != NULL);
+    CHECK(normalize_settings(&s) == GEN_ERR_MANDATORY_NOT_ALLOWED);
+    CHECK(generate_password(&mt, &s, pw) == GEN_ERR_MANDATORY_NOT_ALLOWED);
+    CHECK(pw[0] == '\0');
+
+    settings_set_default(&s);
+    strcpy(s.allowed_special, "!@#");
+    strcpy(s.mandatory_special, "=");
+    CHECK(generate_password(&mt, &s, pw) == GEN_ERR_MANDATORY_NOT_ALLOWED);
+
+    settings_set_default(&s);
+    strcpy(s.allowed_special, "!@#=");
+    strcpy(s.mandatory_special, "=");
     CHECK(generate_password(&mt, &s, pw) == GEN_OK);
     CHECK(strchr(pw, '=') != NULL);
 

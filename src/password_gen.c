@@ -77,12 +77,13 @@ GenStatus normalize_settings(PasswordSettings *s)
     if (s->mandatory_upper) s->allow_upper = 1;
     if (s->mandatory_digit) s->allow_digit = 1;
 
-    char all_special[2 * MAX_SPECIAL + 1];
-    strcpy(all_special, clean_allowed);
-    strcat(all_special, clean_mandatory);
-    if (!copy_unique_specials(all_special, s->allowed_special)) {
-        return GEN_ERR_BAD_SPECIAL;
+    for (int i = 0; clean_mandatory[i] != '\0'; i++) {
+        if (strchr(clean_allowed, clean_mandatory[i]) == NULL) {
+            return GEN_ERR_MANDATORY_NOT_ALLOWED;
+        }
     }
+
+    strcpy(s->allowed_special, clean_allowed);
     strcpy(s->mandatory_special, clean_mandatory);
 
     if (!s->allow_lower && !s->allow_upper && !s->allow_digit
@@ -184,11 +185,12 @@ GenStatus generate_password(MtState *mt, const PasswordSettings *settings, char 
 const char *gen_status_text(GenStatus st)
 {
     switch (st) {
-        case GEN_OK:                    return "Все гаразд";
-        case GEN_ERR_LENGTH:            return "Довжина пароля має бути від 4 до 128 символів";
-        case GEN_ERR_EMPTY_ALPHABET:    return "Не вибрано жодного типу символів";
-        case GEN_ERR_TOO_MANY_MANDATORY:return "Обов’язкових символів більше, ніж довжина пароля";
-        case GEN_ERR_BAD_SPECIAL:       return "У полі спецсимволів можуть бути лише знаки (не літери, цифри чи пробіл)";
+        case GEN_OK:                       return "Все гаразд";
+        case GEN_ERR_LENGTH:               return "Довжина пароля має бути від 4 до 128 символів";
+        case GEN_ERR_EMPTY_ALPHABET:       return "Не вибрано жодного типу символів";
+        case GEN_ERR_TOO_MANY_MANDATORY:   return "Обов’язкових символів більше, ніж довжина пароля";
+        case GEN_ERR_BAD_SPECIAL:          return "У полі спецсимволів можуть бути лише знаки (не літери, цифри чи пробіл)";
+        case GEN_ERR_MANDATORY_NOT_ALLOWED:return "Обов’язкові спецсимволи мають бути серед дозволених";
     }
     return "Невідома помилка";
 }
